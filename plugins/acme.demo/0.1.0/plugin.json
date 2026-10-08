@@ -1,0 +1,205 @@
+{
+  "key": "acme.demo",
+  "name": "ACME Demo 插件",
+  "version": "0.1.0",
+  "kind": "bundle",
+  "description": "示例插件：注册一个组件 + 一个主题",
+  "author": "",
+  "homepage": "",
+  "min_app_version": "0.1.0",
+  "permissions": [],
+  "components": [
+    {
+      "key": "acme.banner",
+      "name": "ACME 横幅",
+      "kind": [
+        "landing",
+        "email"
+      ],
+      "category": "hero",
+      "container": false,
+      "renderer": "generic_text",
+      "props_schema": {
+        "text": {
+          "type": "string",
+          "label": "文案",
+          "default": "Hello ACME",
+          "required": true
+        },
+        "color": {
+          "type": "string",
+          "label": "文字色",
+          "default": "#c8102e"
+        },
+        "font_size": {
+          "type": "string",
+          "label": "字号",
+          "default": "28px"
+        }
+      },
+      "style_defaults": {
+        "font-weight": "800"
+      },
+      "example": {
+        "text": "ACME 官方合作伙伴"
+      }
+    }
+  ],
+  "themes": [
+    {
+      "key": "acme-brand",
+      "name": "ACME 品牌",
+      "kind_scope": "all",
+      "tokens": {
+        "brand": "#0a5",
+        "secondary": "#062"
+      }
+    }
+  ],
+  "templates": [
+    {
+      "key": "acme_promo_landing",
+      "name": "ACME 促销页",
+      "kind": "landing",
+      "scenario": "promo",
+      "tags": [
+        "促销",
+        "acme"
+      ],
+      "locale": "zh-CN",
+      "description": "示例：hero + 特性网格 + CTA",
+      "schema": {
+        "kind": "landing",
+        "doc": {
+          "name": "ACME 促销活动",
+          "subject": "",
+          "preheader": "",
+          "locale": "zh-CN",
+          "description": ""
+        },
+        "theme": {
+          "theme_id": "acme-brand",
+          "token_overrides": {}
+        },
+        "root": {
+          "id": "root",
+          "type": "landing.root",
+          "props": {},
+          "style": {},
+          "children": [
+            {
+              "id": "h1",
+              "type": "landing.hero",
+              "props": {
+                "layout": "centered",
+                "min_height": "420px"
+              },
+              "style": {
+                "background_color": "#062"
+              },
+              "children": [
+                {
+                  "id": "h1t",
+                  "type": "landing.heading",
+                  "props": {
+                    "text": "ACME 新品首发",
+                    "level": "h1",
+                    "color": "#ffffff",
+                    "align": "center"
+                  }
+                },
+                {
+                  "id": "h1b",
+                  "type": "landing.button",
+                  "props": {
+                    "text": "立即抢购",
+                    "url": "https://example.com",
+                    "variant": "primary"
+                  },
+                  "style": {}
+                }
+              ]
+            },
+            {
+              "id": "s1",
+              "type": "landing.section",
+              "props": {},
+              "style": {},
+              "children": [
+                {
+                  "id": "f1",
+                  "type": "landing.feature_grid",
+                  "props": {
+                    "columns": 3,
+                    "items": [
+                      {
+                        "icon": "⚡",
+                        "title": "极速发货",
+                        "desc": "24h 内出库"
+                      },
+                      {
+                        "icon": "🔒",
+                        "label": "",
+                        "title": "正品保障",
+                        "desc": "官方授权"
+                      },
+                      {
+                        "icon": "🎧",
+                        "title": "无忧售后",
+                        "desc": "7天无理由"
+                      }
+                    ]
+                  },
+                  "style": {}
+                }
+              ]
+            },
+            {
+              "id": "f2",
+              "type": "landing.section",
+              "props": {},
+              "style": {},
+              "children": [
+                {
+                  "id": "b1",
+                  "type": "acme.banner",
+                  "props": {
+                    "text": "ACME 官方合作伙伴",
+                    "color": "#0a5"
+                  },
+                  "style": {
+                    "text_align": "center",
+                    "padding": "32px"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "intent_rules": [
+    {
+      "direct": {
+        "landing": [
+          [
+            "acme活动",
+            2.4
+          ],
+          [
+            "acme新品",
+            2.0
+          ]
+        ]
+      },
+      "scenario": {
+        "promo": [
+          "acme促销"
+        ]
+      }
+    }
+  ],
+  "mcp": null,
+  "assets": []
+}

@@ -1,0 +1,75 @@
+# Campaign Edit —— 本地一键起栈
+#
+#   docker compose -f deploy/docker-compose.yml up -d
+#   打开 http://localhost:8088
+#
+# 默认 SQLite（零配置可跑）。生产请改用 PostgreSQL，见 .env.prod 示例。
+
+name: campaign-edit
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: ce-api
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      JWT_SECRET: ${JWT_SECRET:-please-change-this-in-production}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin12345}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/campaign_edit.db}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8088}
+      # 意图识别 LLM（不配置则自动降级为规则通道）
+      LLM_ENABLED: ${LLM_ENABLED:-true}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      # Mautic 投递
+      MAUTIC_API_ENABLED: ${MAUTIC_API_ENABLED:-false}
+      MAUTIC_BASE_URL: ${MAUTIC_BASE_URL:-}
+      MAUTIC_USERNAME: ${MAUTIC_USERNAME:-}
+      MAUTIC_PASSWORD: ${MAUTIC_PASSWORD:-}
+      # 插件安全：远程安装默认关闭
+      PLUGIN_ALLOW_REMOTE_INSTALL: ${PLUGIN_ALLOW_REMOTE_INSTALL:-false}
+    volumes:
+      - ce-data:/app/data
+      - ce-plugins:/app/plugins
+    expose:
+      - "8000"
+    networks: [ce-net]
+
+  web:
+    build:
+      context: ../frontend
+      dockerfile: ../deploy/Dockerfile.frontend
+    container_name: ce-web
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - "${WEB_PORT:-8088}:80"
+    networks: [ce-net]
+
+  # 可选：PostgreSQL。启用方式见 docs/07-deploy.md
+  db:
+    image: postgres:16-alpine
+    container_name: ce-db
+    restart: unless-stopped
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: campaign_edit
+      POSTGRES_USER: ce
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ce_password}
+    volumes:
+      - ce-pgdata:/var/lib/postgresql/data
+    networks: [ce-net]
+
+volumes:
+  ce-data:
+  ce-plugins:
+  ce-pgdata:
+
+networks:
+  ce-net:
+    driver: bridge

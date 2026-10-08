@@ -1,0 +1,66 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ---------- Node ----------
+node_modules/
+dist/
+.vite/
+*.local
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- 应用数据（不要提交） ----------
+data/
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+
+# ---------- 密钥与本地配置 ----------
+.env
+.env.local
+.env.*.local
+deploy/.env
+pip.conf
+.npmrc
+
+# ---------- 已安装插件（示例保留，其余不入库） ----------
+plugins/*
+!plugins/README.md
+!plugins/acme.demo/
+
+# ---------- IDE / 系统 ----------
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 临时 ----------
+*.tmp
+*.bak
+*.log
+tmp/
+temp/
+coverage/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- 文档产物 ----------
+docs/**/*.pdf
+*.docx
