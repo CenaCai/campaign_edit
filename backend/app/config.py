@@ -71,6 +71,26 @@ class Settings:
     export_dir: str = str(BASE_DIR / "data" / "exports")
     export_base_url: str = "http://localhost:8000"
     asset_dir: str = str(BASE_DIR / "data" / "assets")
+    export_inline_assets_threshold: int = 3 * 1024 * 1024  # ≤3MB 的图片内联为 base64
+
+    # --- 资产存储（可插拔适配器） ---
+    # backend = local | s3。local 零依赖直接落盘；s3 需安装 boto3 并配置桶。
+    asset_backend: str = "local"
+    asset_url_prefix: str = "/assets"
+    asset_max_bytes: int = 20 * 1024 * 1024     # 单文件上限 20MB
+    asset_allowed_mimes: str = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/avif"
+    # S3（asset_backend=s3 时生效）
+    s3_bucket: str = ""
+    s3_region: str = ""
+    s3_endpoint: str = ""                        # 兼容 MinIO / OSS S3 API
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    s3_public_base: str = ""                    # CDN / 公网访问前缀
+
+    # --- AI Patch（局部修改）---
+    patch_enabled: bool = True
+    patch_max_ops: int = 40
+    patch_ai_enabled: bool = True                # 自然语言 → patch operations
 
     # --- 插件 ---
     plugin_dir: str = str(BASE_DIR / "plugins")
@@ -129,6 +149,21 @@ def get_settings() -> Settings:
         export_dir=_env("EXPORT_DIR", s.export_dir),
         export_base_url=_env("EXPORT_BASE_URL", s.export_base_url),
         asset_dir=_env("ASSET_DIR", s.asset_dir),
+        export_inline_assets_threshold=_env_int(
+            "EXPORT_INLINE_ASSETS_THRESHOLD", s.export_inline_assets_threshold),
+        asset_backend=_env("ASSET_BACKEND", s.asset_backend),
+        asset_url_prefix=_env("ASSET_URL_PREFIX", s.asset_url_prefix),
+        asset_max_bytes=_env_int("ASSET_MAX_BYTES", s.asset_max_bytes),
+        asset_allowed_mimes=_env("ASSET_ALLOWED_MIMES", s.asset_allowed_mimes),
+        s3_bucket=_env("S3_BUCKET", s.s3_bucket),
+        s3_region=_env("S3_REGION", s.s3_region),
+        s3_endpoint=_env("S3_ENDPOINT", s.s3_endpoint),
+        s3_access_key=_env("S3_ACCESS_KEY", s.s3_access_key),
+        s3_secret_key=_env("S3_SECRET_KEY", s.s3_secret_key),
+        s3_public_base=_env("S3_PUBLIC_BASE", s.s3_public_base),
+        patch_enabled=_env_bool("PATCH_ENABLED", s.patch_enabled),
+        patch_max_ops=_env_int("PATCH_MAX_OPS", s.patch_max_ops),
+        patch_ai_enabled=_env_bool("PATCH_AI_ENABLED", s.patch_ai_enabled),
         plugin_dir=_env("PLUGIN_DIR", s.plugin_dir),
         plugin_allow_remote_install=_env_bool("PLUGIN_ALLOW_REMOTE_INSTALL", False),
         plugin_registry_url=_env("PLUGIN_REGISTRY_URL", ""),

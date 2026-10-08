@@ -89,6 +89,14 @@ export_dir = Path(settings.export_dir)
 export_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/exports", StaticFiles(directory=str(export_dir)), name="exports")
 
+# 本地资产静态托管（ASSET_BACKEND=local 时）。
+# 生产建议由 nginx 直接托管 /assets/ 绕过 API，这里仅供开发与单机部署。
+if settings.asset_backend == "local":
+    asset_dir = Path(settings.asset_dir)
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(settings.asset_url_prefix.rstrip("/") or "/assets",
+              StaticFiles(directory=str(asset_dir)), name="assets")
+
 
 @app.get("/", include_in_schema=False)
 def root() -> dict:

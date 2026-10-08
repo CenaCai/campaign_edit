@@ -334,3 +334,35 @@ class ExportJob(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Asset(Base):
+    """静态资产（图片为主）。
+
+    存在的意义：让导出产物里的图片指向可控地址，而不是编辑器临时地址。
+    按内容哈希去重（同一张 logo 被多份内容引用只存一份）。
+    软删除：资产可能正被多份内容引用，删除前需检查引用关系。
+    """
+
+    __tablename__ = "assets"
+    __table_args__ = (Index("ix_assets_project_active", "project_id", "is_active"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    key: Mapped[str] = mapped_column(String(160), index=True)   # 相对键 asset/2026-10/xxx.png
+    storage_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    storage_backend: Mapped[str] = mapped_column(String(16), default="local")
+    filename: Mapped[str] = mapped_column(String(200), default="")
+    mime: Mapped[str] = mapped_column(String(80), default="")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    url: Mapped[str] = mapped_column(String(600), default="")
+    alt_text: Mapped[str] = mapped_column(String(300), default="")
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"))
+    uploaded_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_svg_safe: Mapped[bool] = mapped_column(Boolean, default=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

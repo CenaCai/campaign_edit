@@ -20,6 +20,7 @@ from ..models import ContentKind
 from ..render import render, resolve_tokens
 from ..render.theme import TOKEN_META, default_tokens, tokens_to_css
 from .templates import validate_schema
+from .tracking_and_schema import inject_tracking, inject_tracking_js
 
 
 def _stamp(name: str) -> str:
@@ -37,23 +38,91 @@ def _write(path: Path, content: str | bytes) -> None:
 
 
 def export_single_html(schema: dict, tokens: dict | None = None, *,
-                       inline: bool = True) -> dict[str, Any]:
-    """单文件 HTML。inline=True 时把 tokens.css 与组件 CSS 全内联。"""
+                       inline: bool = True, asset_mode: str = "auto",
+                       db=None, bundle_dir: Path | None = None,
+                       inject_tracking_opt: bool = True) -> dict[str, Any]:
+    """单文件 HTML。inline=True 时把 tokens.css 与组件 CSS 全内联。
+
+    asset_mode：auto | inline | bundle | cdn | keep
+    - auto：邮件走 inline（客户端不认相对路径），其余保持原样
+    - inline：本地资产转 data URI
+    - bundle：需要 bundle_dir，资产落到该目录的 assets/ 下
+    - cdn：替换为资产 URL（需已上传对象存储）
+    """
     kind = schema.get("kind")
     toks = tokens or resolve_tokens(schema)
-    html = render(schema, tokens=toks)
+    assets_info: dict[str, Any] = {}
+    effective = schema
+
+    # 追踪注入：把 tracking 配置写进所有链接的 href（改 schema 而非改 HTML，
+    # 这样预览 / 导出 / Mautic 投递三条链路自动一致）
+    tracking_info: dict[str, Any] = {}
+    if inject_tracking_opt:
+        effective, tracking_info = inject_tracking(effective)
+
+    if db is not None:
+        from ..assets.service import asset_url_for, bundle_assets, inline_assets_in_schema
+        mode = asset_mode or "auto"
+        if mode == "auto":
+            mode = "inline" if kind == "email" else "keep"
+        if mode == "inline":
+            effective, assets_info = inline_assets_in_schema(schema, db)
+        elif mode == "bundle" and bundle_dir is not None:
+            r = bundle_assets(db, schema, bundle_dir)
+            effective = r["schema"]
+            assets_info = {"copied": r["copied"], "failed": r["failed"],
+                           "total": r["total"]}
+        elif mode == "cdn":
+            _replace_with_urls(effective, db, asset_url_for)
+            assets_info = {"mode": "cdn"}
+
+    html = render(effective, tokens=toks)
+    if tracking_info.get("utm"):
+        html = inject_tracking_js(html, tracking_info["utm"])
     return {
         "filename": f"{_stamp(schema.get('doc', {}).get('name'))}.html",
         "html": html,
         "css": tokens_to_css(toks) if not inline else "",
         "inline": inline,
         "kind": kind,
+        "assets": assets_info,
+        "tracking": tracking_info,
     }
 
 
+def _replace_with_urls(schema: dict, db, resolver) -> None:
+    """把 schema 里的 asset key 换成可访问URL（就地修改）。"""
+    from ..assets.service import collect_asset_refs
+    from ..assets.storage import is_asset_key
+
+    refs = set(collect_asset_refs(schema))
+
+    def walk(node: dict) -> None:
+        props = node.get("props") or {}
+        for k, v in list(props.items()):
+            if isinstance(v, str) and v in refs:
+                props[k] = resolver(v, db)
+        for arr in props.values():
+            if isinstance(arr, list):
+                for item in arr:
+                    if isinstance(item, dict):
+                        for k, v in list(item.items()):
+                            if isinstance(v, str) and v in refs:
+                                item[k] = resolver(v, db)
+        for ch in node.get("children") or []:
+            if isinstance(ch, dict):
+                walk(ch)
+
+    walk(schema.get("root") or {})
+
+
 def export_bundle(schema: dict, tokens: dict | None = None, *,
-                  out_root: str | Path | None = None) -> dict[str, Any]:
-    """zip bundle：HTML + tokens.css + schema.json + README。"""
+                  out_root: str | Path | None = None, db=None) -> dict[str, Any]:
+    """zip bundle：HTML + tokens.css + schema.json + README + assets/。
+
+    带 db 时自动把引用的本地资产复制进 assets/ 并重写 schema 里的引用为相对路径，
+    产物因此是**自包含**的：解压后 index.html + assets/ 可直接部署。
+    """
     kind = schema.get("kind")
     doc = schema.get("doc") or {}
     toks = tokens or resolve_tokens(schema)
@@ -62,25 +131,40 @@ def export_bundle(schema: dict, tokens: dict | None = None, *,
         raise ValueError(f"schema 不合法，无法导出: {v.get('error')}")
 
     base = _stamp(doc.get("name"))
-    root = Path(out_root or settings.export_dir) / f"{base}-{schema.get('doc',{}).get('key','v1')}"
+    root = Path(out_root or settings.export_dir) / f"{base}-{doc.get('key', 'v1')}"
     if root.exists():
         shutil.rmtree(root, ignore_errors=True)
-    _write(root / "index.html", render(schema, tokens=toks))
+    root.mkdir(parents=True, exist_ok=True)
+
+    assets_info: dict[str, Any] = {}
+    effective = schema
+    if db is not None:
+        from ..assets.service import bundle_assets
+        r = bundle_assets(db, schema, root)
+        effective = r["schema"]
+        assets_info = {"copied": r["copied"], "failed": r["failed"],
+                       "total": r["total"]}
+
+    _write(root / "index.html", render(effective, tokens=toks))
     _write(root / "tokens.css", tokens_to_css(toks))
-    _write(root / "schema.json", json.dumps(schema, ensure_ascii=False, indent=2))
+    _write(root / "schema.json", json.dumps(effective, ensure_ascii=False, indent=2))
     if kind == ContentKind.FORM:
-        fields = _form_fields_summary(schema)
-        _write(root / "fields.json", json.dumps(fields, ensure_ascii=False, indent=2))
-    _write(root / "README.md", _readme(schema, toks))
+        _write(root / "fields.json", json.dumps(
+            _form_fields_summary(effective), ensure_ascii=False, indent=2))
+    _write(root / "README.md", _readme(effective, toks, assets_info))
     _write(root / "campaign-edit.json", json.dumps({
         "generator": f"{settings.app_name} {settings.app_version}",
         "kind": kind, "key": doc.get("key"), "name": doc.get("name"),
         "schema_version": schema.get("schema_version"),
+        "assets": {"count": assets_info.get("total", 0),
+                   "copied": len(assets_info.get("copied", []))},
     }, ensure_ascii=False, indent=2))
 
     zip_path = root.with_suffix(".zip")
     _zip_dir(root, zip_path)
-    return {"dir": str(root), "zip": str(zip_path), "files": sorted(p.name for p in root.iterdir())}
+    return {"dir": str(root), "zip": str(zip_path),
+            "files": sorted(p.name for p in root.iterdir()),
+            "assets": assets_info}
 
 
 def export_scaffold(schema: dict, tokens: dict | None = None, *,
@@ -236,10 +320,13 @@ document.querySelectorAll('.ce-form').forEach((form) => {
     return base
 
 
-def _readme(schema: dict, tokens: dict[str, Any]) -> str:
+def _readme(schema: dict, tokens: dict[str, Any],
+            assets_info: dict[str, Any] | None = None) -> str:
     doc = schema.get("doc") or {}
     kind = schema.get("kind")
     kind_label = ContentKind.LABEL.get(kind, kind)
+    assets_info = assets_info or {}
+    n_assets = assets_info.get("total", 0)
     lines = [
         f"# {doc.get('name') or '未命名内容'}",
         "",
@@ -260,6 +347,9 @@ def _readme(schema: dict, tokens: dict[str, Any]) -> str:
     ]
     if kind == ContentKind.FORM:
         lines += ["| `fields.json` | 字段清单（供 CRM / 数据层消费） |"]
+    if n_assets:
+        copied = len(assets_info.get("copied", []))
+        lines += [f"| `assets/` | {copied}/{n_assets} 个图片资源（产物自包含） |"]
     lines += [
         "",
         "## 重新导入",
@@ -284,8 +374,12 @@ def _readme(schema: dict, tokens: dict[str, Any]) -> str:
         "",
         "- 邮件产物已做 Outlook/Gmail 兼容处理；修改结构后建议重新跑一次可投递性检查。",
         "- 落地页/表单产物请自行接入 Analytics 与真实 endpoint。",
-        "- 图片为外链，投放前请确认热链策略与版权。",
     ]
+    if n_assets:
+        lines.append("- assets/ 已随包，部署时与 index.html 保持相对位置即可。")
+    else:
+        lines.append("- 本内容未引用本地资产；若图片是外链，请确认热链策略与版权。")
+    lines
     return "\n".join(lines) + "\n"
 
 

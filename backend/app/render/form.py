@@ -84,7 +84,16 @@ class FormRenderer:
     def _field_model(self, node: dict) -> dict[str, Any]:
         p = node.get("props") or {}
         ntype = node.get("type")
-        name = p.get("name") or f"field_{node.get('id')}"
+        # name 缺失时的兜底链：name → label 派生 → 节点 id。
+        # 不能直接用节点 id：那会让同一模板实例化两次得到不同字段名，
+        # 导致已入库的数据对不上（这正是 JSON Schema 里出现重复 required 的原因）。
+        name = (p.get("name") or "").strip()
+        if not name:
+            # 中文标签保留（正则只剥标点），这样运营在 CRM 里看到的是
+            # field_隐私政策 而不是 field_b861a5ff05 —— 后者没有任何可读性
+            raw = str(p.get("label") or node.get("id") or "field").strip()
+            label = re.sub(r"[^0-9a-zA-Z_\u4e00-\u9fff]+", "_", raw).strip("_").lower()
+            name = f"field_{label}" if label else "field"
         rules: dict[str, Any] = {}
         if p.get("required"):
             rules["required"] = True

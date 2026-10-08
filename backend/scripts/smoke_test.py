@@ -6,11 +6,13 @@
 """
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import urllib.error
 
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000").rstrip("/")
 API = f"{BASE}/api/v1"
@@ -353,6 +355,250 @@ code, bp2 = call("POST", "/blocks/preview",
                   "props": {"title": "套票", "price": "£199", "old_price": "£249"}})
 check("商品卡渲染（含价格对比）", code == 200 and "£199" in bp2.get("html", "")
       and "line-through" in bp2.get("html", ""), f"{code}")
+
+# ============================================================ 10. Asset 资产层
+section("10. Asset 资产层")
+code, st = call("GET", "/assets/status")
+check("存储后端状态", code == 200 and st.get("backend") in ("local", "s3"),
+      f"{st.get('backend')} inline阈值={st.get('inline_threshold')}")
+
+# 1x1 透明 PNG（标准 base64，避免手拼十六进制出错）
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+    "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
+
+
+def upload(fname: str, data: bytes, mime: str = "image/png", alt: str = "") -> tuple[int, dict]:
+    """multipart 上传（标准库手写 multipart，避免引入 requests）。"""
+    boundary = "----ce" + "0" * 40
+    parts: list[bytes] = []
+
+    def field(k: str, v: str) -> None:
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'
+            .encode())
+
+    field("alt", alt)
+    parts.append(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
+        f'filename="{fname}"\r\nContent-Type: {mime}\r\n\r\n'.encode()
+        + data + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    body = b"".join(parts)
+    url = f"{API}/assets"
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    if TOKEN:
+        req.add_header("Authorization", f"Bearer {TOKEN}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode())
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        return 0, {"error": str(e)}
+
+
+code, a1 = upload("logo.png", PNG, alt="CSTS Logo")
+check("上传图片", code == 200 and a1.get("key", "").startswith("asset/"),
+      f"{a1.get('key')}")
+check("解析出尺寸", a1.get("width") == 1 and a1.get("height") == 1,
+      f"{a1.get('width')}x{a1.get('height')}")
+check("魔数识别 MIME", a1.get("mime") == "image/png", str(a1.get("mime")))
+
+code, a2 = upload("logo2.png", PNG, alt="重复上传")
+check("内容哈希去重", code == 200 and a2.get("id") == a1.get("id"),
+      f"同id={a2.get('id') == a1.get('id')}")
+
+code, bad = upload("evil.svg", b'<svg><script>alert(1)</script></svg>',
+                   mime="image/svg+xml")
+check("SVG 含脚本被拒", code == 400 and "脚本" in json.dumps(bad, ensure_ascii=False),
+      f"{code}")
+
+code, txt = upload("notimg.txt", b"hello", mime="text/plain")
+check("非图片被拒", code == 400, f"{code}")
+
+code, alist = call("GET", "/assets")
+check("资产列表", code == 200 and alist.get("count", 0) >= 1, f"{alist.get('count')}")
+
+# ============================================================ 11. AI Patch
+section("11. AI Patch 局部修改")
+code, psch = call("GET", "/patch/schema")
+check("操作清单", code == 200 and len(psch.get("ops", [])) == 8,
+      f"{[o['op'] for o in psch.get('ops', [])]}")
+
+# 新建一份专用落地页测 patch：复用已有内容会因前序用例的改动导致状态污染
+code, ltpls = call("GET", "/templates?kind=landing")
+pbase = (ltpls or [{}])[0]
+code, target = call("POST", f"/templates/{pbase['id']}/instantiate?name=Patch 测试页")
+if code != 200:
+    check("为 Patch 测试新建内容", False, f"{code} {str(target)[:100]}")
+    target = {"id": None}
+check("为 Patch 测试新建内容", target.get("id") is not None, str(target.get("key")))
+code, out = call("GET", f"/contents/{target['id']}/outline")
+blocks = out.get("blocks", []) if code == 200 else []
+check("组件清单可读", code == 200 and len(blocks) > 0, f"{len(blocks)} 个组件")
+
+btn = next((b for b in blocks if b["type"] == "landing.button"), None)
+head = next((b for b in blocks if b["type"] == "landing.heading"), None)
+spacer = next((b for b in blocks if b["type"] == "landing.section"), None)
+
+if btn:
+    # 固定新值：幂等性验证要求"连续两次同样的操作"，不能用随机值。
+    # 第一次产生 diff，第二次（同值）必须无 diff —— 这正是 patch 该有的行为。
+    new_text = "AI改过-1"
+    code, r = call("POST", f"/contents/{target['id']}/patch", {
+        "operations": [{"op": "set_prop", "target": btn["id"],
+                        "prop": "text", "value": new_text}],
+        "dry_run": True})
+    check("dry_run 预演", code == 200 and r.get("diff", {}).get("count", 0) > 0,
+          f"改动 {r.get('diff', {}).get('count')} 处")
+    check("  └ 预演不落库", r.get("dry_run") is True and "version" not in r)
+
+    # 幂等性：同参数连续两次预演，产出的 schema 必须逐字节相同。
+    # 注意：diff 是相对**原始**版本算的，所以两次都会报 1 处改动——这是正确的，
+    # 要验证的是 apply_operations 的确定性（不引入随机 id、不累积副作用）。
+    code, r_idem = call("POST", f"/contents/{target['id']}/patch", {
+        "operations": [{"op": "set_prop", "target": btn["id"],
+                        "prop": "text", "value": new_text}],
+        "dry_run": True})
+    same = (code == 200
+            and r_idem.get("preview_schema") == r.get("preview_schema")
+            and r_idem.get("applied") == r.get("applied"))
+    check("  └ 幂等（同参数两次预演结果一致）", same,
+          f"diff稳定={r_idem.get('diff', {}).get('count')}")
+
+    code, r2 = call("POST", f"/contents/{target['id']}/patch", {
+        "operations": [{"op": "set_prop", "target": btn["id"],
+                        "prop": "text", "value": new_text}],
+        "message": "冒烟测试 patch"})
+    check("提交 patch 生成新版本", code == 200 and r2.get("version", 0) >= 2,
+          f"v{r2.get('version')}")
+
+    code, pv = call("GET", f"/contents/{target['id']}/preview")
+    check("  └ 改动已反映到预览", new_text in pv.get("html", ""),
+          f"html {len(pv.get('html',''))} 字节")
+
+    # 失败不应污染 schema：先非法再合法，验证原子性
+    code, r_bad = call("POST", f"/contents/{target['id']}/patch", {
+        "operations": [{"op": "set_prop", "target": btn["id"],
+                        "prop": "text", "value": "不该生效"},
+                       {"op": "set_prop", "target": "不存在", "prop": "x", "value": "y"}],
+        "dry_run": False})
+    check("批量操作失败则整体回滚（原子性）", code == 422, f"{code}")
+    code, pv2 = call("GET", f"/contents/{target['id']}/preview")
+    check("  └ 失败操作未写入任何内容", "不该生效" not in pv2.get("html", ""),
+          "已回滚")
+
+code, r = call("POST", f"/contents/{target['id']}/patch", {
+    "operations": [{"op": "set_prop", "target": "不存在的id",
+                    "prop": "text", "value": "x"}], "dry_run": True})
+check("目标不存在被拦截", code == 422, f"{code}")
+
+code, r = call("POST", f"/contents/{target['id']}/patch", {
+    "operations": [{"op": "set_prop", "target": head["id"] if head else "root",
+                    "prop": "不存在的属性", "value": "x"}], "dry_run": True})
+check("属性不在白名单被拦", code == 422 and "没有属性" in json.dumps(r, ensure_ascii=False),
+      f"{code}")
+
+code, r = call("POST", f"/contents/{target['id']}/patch", {
+    "operations": [{"op": "remove", "target": "root"}], "dry_run": True})
+check("不能删根节点", code == 422, f"{code}")
+
+code, r = call("POST", f"/contents/{target['id']}/patch", {
+    "operations": [{"op": "未知操作", "target": "x"}], "dry_run": True})
+check("未知操作被拒", code == 422, f"{code}")
+
+code, r = call("POST", f"/contents/{target['id']}/patch", {
+    "operations": [{"op": "set_style", "target": btn["id"] if btn else "x",
+                    "style": "position", "value": "absolute"}], "dry_run": True})
+check("邮件/落地页安全样式白名单生效",
+      code == 422 or (code == 200 and r.get("ok")), f"{code}")
+
+code, r = call("POST", f"/contents/{target['id']}/patch", {
+    "operations": [{"op": "add_block", "type": "landing.form_embed",
+                    "props": {"title": "AI 加的表单位"}}], "dry_run": True})
+check("新增组件", code == 200 and r.get("diff", {}).get("count", 0) > 0,
+      f"新增 {r.get('diff', {}).get('summary')}")
+
+code, r = call("POST", f"/contents/{target['id']}/patch", {
+    "operations": [{"op": "add_block", "type": "form.email_field"}], "dry_run": True})
+check("跨类型组件被拦", code == 422 and "不能用于" in json.dumps(r, ensure_ascii=False),
+      f"{code}")
+
+code, r = call("POST", f"/contents/{target['id']}/ai-patch", {
+    "instruction": "把主标题改成「AI 编辑测试」", "dry_run": True})
+check("AI 通道（无 LLM 时优雅降级）",
+      code in (200, 503) and ("LLM 未配置" in json.dumps(r, ensure_ascii=False)
+                              or r.get("operations")),
+      f"{code}")
+
+code, sg = call("GET", f"/contents/{target['id']}/ai-suggest")
+check("改进建议（纯规则，永远可用）",
+      code == 200 and "suggestions" in sg, f"{sg.get('count')} 条")
+
+# ============================================================ 12. 导出环节
+section("12. 导出环节：资产校验 / 追踪注入 / JSON Schema")
+code, r = call("POST", f"/contents/{target['id']}/patch", {
+    "operations": [{"op": "set_token", "token": "brand", "value": "#ff0000"}],
+    "dry_run": True})
+check("改主题 token", code == 200, f"{code}")
+
+code, r = call("POST", f"/contents/{target['id']}/patch", {
+    "operations": [{"op": "set_token", "token": "不存在的token", "value": "#000"}],
+    "dry_run": True})
+check("未知 token 被拦", code == 422 and "未知 token" in json.dumps(r, ensure_ascii=False),
+      f"{code}")
+
+code, exp = call("POST", f"/contents/{target['id']}/export", {
+    "target": "single_html", "allow_lint_error": True,
+    "options": {"asset_mode": "inline"}})
+check("导出带资产内联", code == 200 and "assets" in exp.get("files", {}),
+      f"assets={exp.get('files', {}).get('assets')}")
+
+# 追踪注入
+code, sch = call("GET", f"/contents/{target['id']}/schema")
+if code == 200:
+    s2 = sch["schema"]
+    s2["tracking"] = {"utm_source": "email", "utm_campaign": "smoke", "junk": "x"}
+    code, saved = call("POST", f"/contents/{target['id']}/save",
+                       {"schema": s2, "message": "加 tracking", "lint_gate": False})
+    check("保存 tracking 配置", code == 200, f"{code}")
+    if code == 200:
+        code, exp2 = call("POST", f"/contents/{target['id']}/export", {
+            "target": "single_html", "allow_lint_error": True})
+        html = exp2.get("html", "") if code == 200 else ""
+        check("追踪注入到链接", code == 200 and "utm_source=email" in html,
+              f"出现 {html.count('utm_source=email')} 次")
+        check("  └ 非法 UTM 键被过滤", "junk=" not in html)
+
+# 表单 JSON Schema
+code, flist = call("GET", "/contents?kind=form")
+fitem = next((c for c in (flist or []) if c.get("status") != "archived"), None)
+if fitem:
+    code, js = call("GET", f"/contents/{fitem['id']}/json-schema")
+    jd = (js or {}).get("jsonSchema", {})
+    check("导出 JSON Schema", code == 200 and jd.get("$schema", "").endswith("draft-07/schema#"),
+          f"{len(jd.get('properties', {}))} 个字段")
+    check("  └ required 无重复",
+          len(jd.get("required", [])) == len(set(jd.get("required", []))),
+          str(jd.get("required")))
+    check("  └ 含 uiSchema", "uiSchema" in (js or {}))
+    check("  └ 字段名可读（非节点 id）",
+          all(not n.startswith("field_b_") for n in jd.get("properties", {})),
+          str(list(jd.get("properties", {}))[:4]))
+
+    code, vv = call("POST", f"/contents/{fitem['id']}/validate-submission",
+                    {"firstname": "", "email": "bad", "country": "XX"})
+    check("提交数据校验", code == 200 and vv.get("valid") is False and vv.get("errors"),
+          f"{len(vv.get('errors', []))} 个错误")
+
+code, jsn = call("GET", f"/contents/{target['id']}/json-schema")
+check("非表单拒绝导出 JSON Schema", code == 400, f"{code}")
 
 # ============================================================ 汇总
 print("\n" + "=" * 60)

@@ -33,6 +33,9 @@ services:
       MAUTIC_PASSWORD: ${MAUTIC_PASSWORD:-}
       # 插件安全：远程安装默认关闭
       PLUGIN_ALLOW_REMOTE_INSTALL: ${PLUGIN_ALLOW_REMOTE_INSTALL:-false}
+      # 资产存储（local 由 nginx 直接托管 /assets/，不走API）
+      ASSET_BACKEND: ${ASSET_BACKEND:-local}
+      ASSET_URL_PREFIX: ${ASSET_URL_PREFIX:-/assets}
     volumes:
       - ce-data:/app/data
       - ce-plugins:/app/plugins

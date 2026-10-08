@@ -360,6 +360,8 @@ PLUGIN_DIR=./plugins
 | [`docs/05-export.md`](docs/05-export.md) | 四种导出目标、Mautic 坑位清单 |
 | [`docs/06-extension.md`](docs/06-extension.md) | 插件 manifest、注册流程、MCP 接入 |
 | [`docs/07-deploy.md`](docs/07-deploy.md) | 本地/生产部署、备份、迁移 |
+| [`docs/09-assets.md`](docs/09-assets.md) | 资产层：存储适配器、引用分析、三种落地策略 |
+| [`docs/10-ai-patch.md`](docs/10-ai-patch.md) | AI Patch：八种操作、五条硬约束、原子性 |
 
 ---
 

@@ -12,7 +12,11 @@ from .schema import make_node  # noqa: F401  (便于 block 模块内构造示例
 
 
 class BlockSpec(dict):
-    """组件定义。就是个 dict，加了 key 与静态构造糖。"""
+    """组件定义。就是个 dict，加了属性访问与构造糖。
+
+    保留 dict 语义是为了和 schema 里的 ``props`` / ``style`` 统一序列化；
+    加property 是为了让调用处（patch/operations.py、export 等）读起来更清楚。
+    """
 
     @property
     def key(self) -> str:
@@ -21,6 +25,38 @@ class BlockSpec(dict):
     @property
     def name(self) -> str:
         return self["name"]
+
+    @property
+    def kind(self) -> list:
+        return self.get("kind") or []
+
+    @property
+    def category(self) -> str:
+        return self.get("category") or "basic"
+
+    @property
+    def renderer(self) -> str:
+        return self.get("renderer") or self["key"]
+
+    @property
+    def props_schema(self) -> dict:
+        return self.get("props_schema") or {}
+
+    @property
+    def style_defaults(self) -> dict:
+        return self.get("style_defaults") or {}
+
+    @property
+    def children_allowed(self) -> list | None:
+        return self.get("children_allowed")
+
+    @property
+    def children_limit(self) -> dict | None:
+        return self.get("children_limit")
+
+    @property
+    def source(self) -> str:
+        return self.get("source") or "builtin"
 
     @property
     def container(self) -> bool:

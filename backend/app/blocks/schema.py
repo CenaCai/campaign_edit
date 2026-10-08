@@ -210,6 +210,12 @@ def normalize_schema(schema: dict[str, Any], registry) -> dict[str, Any]:
     theme.setdefault("theme_id", "")
     theme.setdefault("token_overrides", {})
 
+    # tracking 是内容级配置（UTM 等），必须保留。
+    # 不放在 doc 里是因为它不属于"文档描述"，而是投放配置。
+    tracking = copy.deepcopy(schema.get("tracking") or {})
+    if not isinstance(tracking, dict):
+        tracking = {}
+
     email = kind == "email"
     root_raw = schema.get("root")
     root_spec = registry.root_spec(kind)
@@ -234,14 +240,18 @@ def normalize_schema(schema: dict[str, Any], registry) -> dict[str, Any]:
         node["children"] = kept
 
     fix_children(root)
-    return {
+    out = {
         "schema_version": SCHEMA_VERSION,
         "kind": kind,
         "doc": doc,
         "theme": theme,
         "root": root,
-        "warnings": warnings,
     }
+    if tracking:
+        out["tracking"] = tracking
+    if warnings:
+        out["warnings"] = warnings
+    return out
 
 
 # ---------------------------------------------------------------- diff

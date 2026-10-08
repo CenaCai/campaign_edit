@@ -300,6 +300,16 @@ def export(content_id: str, req: ExportRequest, db: Session = Depends(get_db),
 
     pv = render_preview(version.schema, kind=c.kind, tokens=resolve_tokens(version.schema))
     lint = pv["lint"]
+
+    # 资产校验：引用的本地资产缺失时必须阻断，否则导出物里是坏图
+    from ...assets.service import validate_assets
+    asset_check = validate_assets(db, version.schema)
+    if asset_check["missing"] and not req.options.get("allow_missing_assets"):
+        raise HTTPException(422, {
+            "message": f"有 {len(asset_check['missing'])} 个图片资产缺失，导出被阻断",
+            "missing_assets": asset_check["missing"],
+            "hint": "重新上传资产，或用 options.allow_missing_assets=true 强制导出",
+        })
     if req.target in ("single_html", "bundle", "scaffold") and not req.allow_lint_error:
         if not lint["passed"]:
             errors = [i for i in lint["issues"] if i["severity"] == "error"]
@@ -317,11 +327,14 @@ def export(content_id: str, req: ExportRequest, db: Session = Depends(get_db),
 
     try:
         if req.target == "single_html":
-            r = exporter.export_single_html(version.schema)
-            out = {"filename": r["filename"], "css": r["css"]}
+            r = exporter.export_single_html(
+                version.schema, db=db,
+                asset_mode=req.options.get("asset_mode", "auto"))
+            out = {"filename": r["filename"], "css": r["css"],
+                   "assets": r.get("assets", {})}
             html = r["html"]
         elif req.target == "bundle":
-            r = exporter.export_bundle(version.schema)
+            r = exporter.export_bundle(version.schema, db=db)
             out = r
             c.export_path = r["zip"]
         elif req.target == "scaffold":
@@ -358,7 +371,9 @@ def export(content_id: str, req: ExportRequest, db: Session = Depends(get_db),
         raise HTTPException(500, f"导出失败: {exc}") from exc
 
     job.status = "success"
-    job.result = {**out, "lint": lint, "message": message}
+    job.result = {**out, "lint": lint, "message": message,
+                  "assets": {k: asset_check[k] for k in
+                             ("count", "missing", "no_alt", "warn_count")}}
     if req.target == "single_html":
         job.result["html_bytes"] = len(html or "")
     db.commit()
@@ -411,6 +426,40 @@ def duplicate(content_id: str, name: str = "", db: Session = Depends(get_db),
         db, user=user, kind=c.kind, name=new_name, schema_=schema, key=key,
         locale=c.locale, project_id=c.project_id, theme_id=c.theme_id,
         meta={**(c.meta or {}), "duplicated_from": c.id})
+
+
+@router.get("/{content_id}/json-schema", summary="导出标准 JSON Schema（draft-07）")
+def json_schema(content_id: str, version: int | None = None,
+                with_ui: bool = True, db: Session = Depends(get_db),
+                user: User = Depends(get_current_user)) -> Any:
+    """表单专用。产出可被 ajv 校验、被 Formily 消费、被文档工具使用的标准结构。"""
+    from ...export.tracking_and_schema import to_json_schema, to_ui_schema
+    c = _get_content(db, content_id)
+    if c.kind != "form":
+        raise HTTPException(400, f"仅表单内容支持 JSON Schema 导出（当前 {c.kind}）")
+    v = services.get_version(db, c, version)
+    doc = to_json_schema(v.schema, title=(v.schema.get("doc") or {}).get("name") or c.name)
+    out: dict[str, Any] = {"content_id": c.id, "version": v.version, "jsonSchema": doc}
+    if with_ui:
+        out["uiSchema"] = to_ui_schema(v.schema)
+    return out
+
+
+@router.post("/{content_id}/validate-submission", summary="按JSON Schema 校验一份提交数据")
+def validate_submission(content_id: str, payload: dict[str, Any],
+                        version: int | None = None, db: Session = Depends(get_db),
+                        user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """前端提交前自校验，或服务端做二次校验（不引 ajv，纯标准库实现）。"""
+    from ...export.tracking_and_schema import to_ajv_errors, to_json_schema
+    c = _get_content(db, content_id)
+    if c.kind != "form":
+        raise HTTPException(400, "仅表单内容支持提交校验")
+    v = services.get_version(db, c, version)
+    doc = to_json_schema(v.schema)
+    errors = to_ajv_errors(doc, payload or {})
+    return {"ok": not errors, "valid": not errors, "errors": errors,
+            "field_count": len(doc.get("properties", {})),
+            "required": doc.get("required", [])}
 
 
 @router.get("/{content_id}/structure", summary="大纲结构（前端 Outline 树）")

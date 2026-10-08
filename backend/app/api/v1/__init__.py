@@ -10,7 +10,7 @@ from ...deps import create_token, get_current_user
 from ...models import Project, User
 from ...schemas import LoginIn, ProjectIn, ProjectOut, TokenOut, UserOut
 
-from . import contents, intents, plugins, system
+from . import assets, contents, intents, patch, plugins, system
 
 api_router = APIRouter()
 
@@ -76,4 +76,6 @@ api_router.include_router(contents.router)
 api_router.include_router(contents.tpl_router)
 api_router.include_router(contents.theme_router)
 api_router.include_router(plugins.router)
+api_router.include_router(assets.router)
+api_router.include_router(patch.router)
 api_router.include_router(plugins.block_router)
